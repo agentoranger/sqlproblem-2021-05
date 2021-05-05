@@ -1,7 +1,3 @@
-#####################################
-##    FIFTH EXECUTION
-#####################################
-
 2021-01-12 17:52:55 EST [21788]: db=wwdev,user=postgres,app=psql,client=[local] LOG:  duration: 2194.720 ms  plan:
 	Query Text: select 	DISTINCT
 			crmacct_id::integer,crmacct_number::text, crmacct_name::text,
