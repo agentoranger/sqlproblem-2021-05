@@ -1,0 +1,22 @@
+SELECT * from ww_custom.network_search_1( 
+    'Physician Practice'::text,
+    '{}'::_text,        -- ppo
+    '{}'::_text,        -- speciality
+    ''::text,            -- practice name
+    ''::text,            -- address
+    ''::text,            -- city
+    ''::text,            -- state
+    '15317'::text,       -- zip
+    ''::text,            -- county
+    ''::text,            -- phone ac
+    ''::text,            -- phone number
+    ''::text,            -- fax ac
+    ''::text,            -- fax number
+    10::int4,            -- distance
+    ''::text,            -- part,
+    '{English}'::_text,
+    false,
+    0,
+    ''::text
+)
+;

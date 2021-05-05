@@ -1,0 +1,274 @@
+DECLARE
+	_result ww_custom.network_search_result_20200908;
+	_role text;
+	_ppo  text[];
+	_speciality text[];
+	_practice_name text;
+	_address text;
+	_city text;
+	_state text;
+	_zip text;
+	_county text;
+	_distance integer;
+	_zip_long numeric(15,10);
+	_zip_lat numeric(15,10);
+	_phone_ac text;
+	_phone_number text;
+	_fax_ac text;
+	_fax_number text;
+	_search_zip text;
+	_prov_part text;
+	_language text[];
+	_minority bool[];
+	_health_system_id integer;
+	_health_system_array integer[];
+	_doctor text;
+	
+BEGIN
+	_role := COALESCE(network_role,'');
+	_ppo := COALESCE(ppo,'{}');
+	_speciality := COALESCE(speciality,'{}');
+	_practice_name := COALESCE(practice_name,'');
+	_address := COALESCE(address,'');
+	_city := COALESCE(city,'');
+	_state := COALESCE(state,'');
+	_zip := COALESCE(zip,'');
+	_county := COALESCE(county,'');
+	_distance := COALESCE(distance,0);
+	_phone_ac := COALESCE(phone_ac,'');
+	_phone_number := COALESCE(phone_number,'');
+	_fax_ac := COALESCE(fax_ac,'');
+	_fax_number := COALESCE(fax_number,'');
+	_prov_part := COALESCE(prov_part,'');
+	_language := COALESCE(spoken_language,'{English}');
+	_health_system_id := COALESCE(health_system,0);
+	_doctor = COALESCE(doctor,'');
+		
+
+	if ( minority <> true) then	
+		_minority = '{false,true}';
+	elsif ( minority) then	
+		_minority = '{true}';
+	else
+		_minority = '{false,true}';
+	end if;
+	
+
+	if (_zip != '') THEN			
+		select ww_zip_code_lat , ww_zip_code_lon into _zip_lat,_zip_long 
+		from ww_custom.ww_zip_code where ww_zip_code_code = _zip;
+	END IF;
+	
+	if ( _health_system_id = 0 ) then	
+		 select array_agg(cast(health_system_id as text)) into _health_system_array from ww_custom.health_system;
+	else 
+		_health_system_array := array[_health_system_id];
+	end if;
+
+	_search_zip = _zip;
+
+	
+if ( _health_system_id = 0 ) then
+		return query 
+		select 	DISTINCT
+		crmacct_id::integer,crmacct_number::text, crmacct_name::text,
+		addr_line1::text,addr_line2::text,addr_line3::text,addr_city::text,addr_state::text,addr_postalcode::text,ww_zip_code_county::text,
+		prov_speciality::text[],
+		prov_ppo::text[],
+		abs(ww_custom.distance(coalesce(addr_lat,ww_zip_code_lat),coalesce(addr_lon,ww_zip_code_lon),_zip_lat,_zip_long)) dist,
+		phone.cntctphone_phone phone, fax.cntctphone_phone fax,provider_ext_part,
+		case_management_notes_text network_search_results_notes,_role,provider_language_minority.spoken_language,
+		case 
+			when provider_language_minority.minority <@ '{true}' then true
+			else false
+		end as minority,health_system_name,array_to_string(doctor_list,',') doctor_list,do_not_use_text,
+		(SELECT ww_custom.donotoperate((select state_id from public.state where state_abbr = addr_state and state_country_id = 230))) as do_not_operate
+		from public.crmacct
+		join public.crmacctrole on crmacctrole_crmacct_id = crmacct_id and crmacctrole_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = _role)
+		join public.addr on (select ww_custom.get_panel_primary_address(crmacct_id)) = addr_id 
+		LEFT JOIN public.crmacctcntctass on crmacctcntctass_crmacct_id = crmacct_id and crmacctcntctass_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Scheduling')
+		--LEFT JOIN public.cntctphone phone on phone.cntctphone_cntct_id = crmacctcntctass_cntct_id and phone.cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Office')
+		LEFT JOIN 
+		(		
+			select cntctphone_cntct_id,cntctphone_phone from  public.cntctphone  
+			where cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Office')
+			and cntctphone_phone like '800-%' 
+			union 
+			select cntctphone_cntct_id,cntctphone_phone from  public.cntctphone  
+			where cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Office')
+			and cntctphone_phone not like '800-%' 
+			and cntctphone_cntct_id not in 
+			(
+				select cntctphone_cntct_id  from public.cntctphone  
+				where cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Office')
+				and cntctphone_phone like '800-%'	 		
+			)
+		) phone on phone.cntctphone_cntct_id = crmacctcntctass_cntct_id 
+		LEFT JOIN
+		(
+			select crmacctcntctass_crmacct_id,array_agg(cntct.cntct_name) doctor_list
+			from public.crmacctcntctass 
+			join public.cntct on cntct_id = crmacctcntctass_cntct_id
+			where crmacctcntctass_crmrole_id = 23 and crmacctcntctass_active
+			and upper(cntct_name) ~ upper(_doctor)
+			group by crmacctcntctass_crmacct_id
+		) doc on doc.crmacctcntctass_crmacct_id = crmacct_id
+		LEFT JOIN
+		(
+			select special_instruction_crmacct_id,
+			case  
+				when special_instruction_text != '' then true 
+				else false
+			end as do_not_use_text
+			from ww_custom.special_instruction
+			join ww_custom.special_instruction_category on special_instruction_category_category_id = special_instruction_category_id
+			where special_instruction_category_id = 92
+		) dnu on dnu.special_instruction_crmacct_id = crmacct_id
+		LEFT JOIN
+		(
+		select cntctphone_cntct_id,cntctphone_phone from  public.cntctphone  
+		where cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Fax')
+		and cntctphone_phone like '800-%'
+		union
+		select cntctphone_cntct_id,cntctphone_phone from  public.cntctphone  
+		where cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Fax')
+		and cntctphone_phone not like '800-%'
+		and cntctphone_cntct_id not in
+			(
+			select cntctphone_cntct_id  from public.cntctphone
+			where cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Fax')
+			and cntctphone_phone like '800-%'
+			)
+		) fax on fax.cntctphone_cntct_id = crmacctcntctass_cntct_id
+		left join ww_custom.ww_zip_code on ww_zip_code_code = addr_postalcode
+		left join ww_custom.provider_specialities_view prov_speciality on prov_speciality.provider_specialities_provider_id = crmacct_id			
+		left join ww_custom.provider_ppo_view prov_ppo on prov_ppo.provider_ppo_provider_id = crmacct_id		
+		LEFT JOIN ww_custom.provider_ext on crmacct_id = provider_ext_provider_id
+		left join ww_custom.health_system on health_system_id = provider_ext_health_system_id
+		LEFT JOIN ww_custom.provider_language_minority on crmacct_id = phy_crmacct_id		
+		LEFT JOIN 
+		(	
+			select case_management_notes_provider_id,
+			string_agg(case_management_notes_department || ':' || case_management_notes_text,',') case_management_notes_text
+			from ww_custom.case_management_notes
+			group by case_management_notes_provider_id
+		) fgty on case_management_notes_provider_id = crmacct_id
+		where 1 = 1
+		and 	( 
+				abs(ww_custom.distance(coalesce(addr_lat,ww_zip_code_lat),coalesce(addr_lon,ww_zip_code_lon),_zip_lat,_zip_long)) < _distance
+				OR addr_postalcode like '%' || _search_zip || '%'
+			)
+		and (upper(array_to_string(Coalesce(doctor_list,'{}'),',')) ~ upper(_doctor))
+		and (COALESCE(prov_ppo,'{}') @> _ppo OR COALESCE(prov_ppo,'{}') && _ppo) 
+		and (COALESCE(prov_speciality,'{}') @> _speciality OR COALESCE(prov_speciality,'{}') && _speciality)		
+		and (COALESCE(provider_language_minority.spoken_language,'{English}') @> _language)
+		and (
+			(_minority @> COALESCE(provider_language_minority.minority,'{false}')   )			
+			)
+		and UPPER(crmacct_name) like '%' || UPPER(_practice_name) || '%'
+		and UPPER(addr_line1) like '%' || UPPER(_address) || '%'
+		and UPPER(addr_city) like '%' || UPPER(_city) || '%'
+		and UPPER(addr_state) like '%' || UPPER(_state) || '%'
+		and UPPER(ww_zip_code_county) like '%' || UPPER(_county) || '%'		
+		and 
+		( 
+			coalesce(phone.cntctphone_phone,'') like  _phone_ac || '%'
+			and replace(coalesce(phone.cntctphone_phone,''),'-','') like  '%' || _phone_number || '%'
+		)
+		and 
+		(
+			coalesce(fax.cntctphone_phone,'') like  _fax_ac || '%'
+			and replace(coalesce(fax.cntctphone_phone,''),'-','') like  '%' || _fax_number || '%'
+		)
+		and COALESCE(provider_ext_part,'' ) like  '%' || _prov_part || '%'		
+		order by abs(ww_custom.distance(coalesce(addr_lat,ww_zip_code_lat),coalesce(addr_lon,ww_zip_code_lon),_zip_lat,_zip_long));
+	else
+		return query 
+		select 	DISTINCT
+		crmacct_id::integer,crmacct_number::text, crmacct_name::text,
+		addr_line1::text,addr_line2::text,addr_line3::text,addr_city::text,addr_state::text,addr_postalcode::text,ww_zip_code_county::text,
+		prov_speciality::text[],
+		prov_ppo::text[],
+		abs(ww_custom.distance(coalesce(addr_lat,ww_zip_code_lat),coalesce(addr_lon,ww_zip_code_lon),_zip_lat,_zip_long)) dist,
+		phone.cntctphone_phone phone, fax.cntctphone_phone fax,provider_ext_part,
+		case_management_notes_text network_search_results_notes,_role,provider_language_minority.spoken_language,
+		case 
+			when provider_language_minority.minority <@ '{true}' then true
+			else false
+		end as minority,health_system_name,array_to_string(doctor_list,',') doctor_list,do_not_use_text,
+		(SELECT ww_custom.donotoperate((select state_id from public.state where state_abbr = addr_state and state_country_id = 230))) as do_not_operate
+		from public.crmacct
+		join public.crmacctrole on crmacctrole_crmacct_id = crmacct_id and crmacctrole_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = _role)
+		join public.addr on (select ww_custom.get_panel_primary_address(crmacct_id)) = addr_id 
+		LEFT JOIN public.crmacctcntctass on crmacctcntctass_crmacct_id = crmacct_id and crmacctcntctass_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Scheduling')
+		LEFT JOIN public.cntctphone phone on phone.cntctphone_cntct_id = crmacctcntctass_cntct_id and phone.cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Office')
+		LEFT JOIN public.cntctphone fax on fax.cntctphone_cntct_id = crmacctcntctass_cntct_id and fax.cntctphone_crmrole_id = (select crmrole_id from public.crmrole where crmrole_name = 'Fax')
+		left join ww_custom.ww_zip_code on ww_zip_code_code = addr_postalcode
+		left join ww_custom.provider_specialities_view prov_speciality on prov_speciality.provider_specialities_provider_id = crmacct_id			
+		left join ww_custom.provider_ppo_view prov_ppo on prov_ppo.provider_ppo_provider_id = crmacct_id		
+		LEFT JOIN ww_custom.provider_ext on crmacct_id = provider_ext_provider_id
+		left join ww_custom.health_system on health_system_id = provider_ext_health_system_id
+		LEFT JOIN ww_custom.provider_language_minority on crmacct_id = phy_crmacct_id
+		LEFT JOIN
+		(
+			select crmacctcntctass_crmacct_id,array_agg(cntct.cntct_name) doctor_list
+			from public.crmacctcntctass 
+			join public.cntct on cntct_id = crmacctcntctass_cntct_id
+			where crmacctcntctass_crmrole_id = 23 and crmacctcntctass_active
+			and upper(cntct_name) ~ upper(_doctor)
+			group by crmacctcntctass_crmacct_id
+		) doc on doc.crmacctcntctass_crmacct_id = crmacct_id
+		LEFT JOIN 
+		(	
+			select case_management_notes_provider_id,
+			string_agg(case_management_notes_department || ':' || case_management_notes_text,',') case_management_notes_text
+			from ww_custom.case_management_notes
+			group by case_management_notes_provider_id
+		) fgty on case_management_notes_provider_id = crmacct_id
+		LEFT JOIN
+		(
+			select special_instruction_crmacct_id,
+			case  
+				when special_instruction_text != '' then true 
+				else false
+			end as do_not_use_text
+			from ww_custom.special_instruction
+			join ww_custom.special_instruction_category on special_instruction_category_category_id = special_instruction_category_id
+			where special_instruction_category_id = 92
+		) dnu on dnu.special_instruction_crmacct_id = crmacct_id
+		where 1 = 1
+		and 	( 
+				abs(ww_custom.distance(coalesce(addr_lat,ww_zip_code_lat),coalesce(addr_lon,ww_zip_code_lon),_zip_lat,_zip_long)) < _distance
+				OR addr_postalcode like '%' || _search_zip || '%'
+			)
+		and (upper(array_to_string(Coalesce(doctor_list,'{}'),',')) ~ upper(_doctor))
+		and (COALESCE(prov_ppo,'{}') @> _ppo OR COALESCE(prov_ppo,'{}') && _ppo) 
+		and (COALESCE(prov_speciality,'{}') @> _speciality OR COALESCE(prov_speciality,'{}') && _speciality)		
+		and (COALESCE(provider_language_minority.spoken_language,'{English}') @> _language)
+		and (
+			(_minority @> COALESCE(provider_language_minority.minority,'{false}')   )			
+			)
+		and UPPER(crmacct_name) like '%' || UPPER(_practice_name) || '%'
+		and UPPER(addr_line1) like '%' || UPPER(_address) || '%'
+		and UPPER(addr_city) like '%' || UPPER(_city) || '%'
+		and UPPER(addr_state) like '%' || UPPER(_state) || '%'
+		and UPPER(ww_zip_code_county) like '%' || UPPER(_county) || '%'		
+		and 
+		(
+			coalesce(phone.cntctphone_phone,'') like  _phone_ac || '%'
+			and replace(coalesce(phone.cntctphone_phone,''),'-','') like  '%' || _phone_number || '%'
+		)
+		and 
+		(
+			coalesce(fax.cntctphone_phone,'') like  _fax_ac || '%'
+			and replace(coalesce(fax.cntctphone_phone,''),'-','') like  '%' || _fax_number || '%'
+		)
+		and COALESCE(provider_ext_part,'' ) like  '%' || _prov_part || '%'
+		and  _health_system_array  @> array[coalesce(provider_ext_health_system_id,0)]
+		order by 12;
+	end if;
+	
+	RETURN ;
+	
+	
+END
