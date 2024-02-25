@@ -1,9 +1,8 @@
 For those who end up here, this issue is somewhat deprecated.  Please refer the following reddit thread for the answers.
-
 https://www.reddit.com/r/PostgreSQL/comments/n5ln31/function_performs_very_slowly_when_used_for_the/
 
 Function performs very slowly when used for the 6th time
-Hey there, My name is a Brian and I am a sysadmin for a small company here in pittsburgh. I am looking what I consider to be a very curious problem. If you are looking for a brain teaser, look no further. I found that resolving this issue on my own is well above my capacity.
+I am looking what I consider to be a very curious problem. If you are looking for a brain teaser, look no further. I found that resolving this issue on my own is well above my capacity.
 
 Our dba put together a rather complex function that generally performs well. However, when the function is performed more than 5 times in a single user session (psql, pgadmin, erp) the function begins to slow down drastically on the 6th execution and will perform that way until we log off of the session. Starting a new session will allow the function to perform quickly again.
 
